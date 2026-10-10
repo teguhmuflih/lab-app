@@ -7,6 +7,8 @@ RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 FROM python:3.13-slim-trixie
 RUN useradd --system --uid 10001 --no-create-home app
 COPY --from=build /install /usr/local
+# Paket bawaan base image yang punya CVE HIGH dengan perbaikan (Trivy, 2026-10-10)
+RUN pip install --no-cache-dir --upgrade "setuptools>=78.1.1" "urllib3>=2.8.0" "msgpack>=1.2.1"
 COPY app/ /srv/app/
 WORKDIR /srv
 ARG APP_VERSION=dev

@@ -28,4 +28,7 @@ curl -k https://lab-app-dev.apps.lab.internal/rag/ask -H 'Content-Type: applicat
   -d '{"question":"Berapa hari cuti tahunan?"}'
 ```
 
+Jenkins (fase 8, modul belajar) menjalankan tahap test yang sama lewat `Jenkinsfile` (agent pod Kubernetes):
+https://jenkins.apps.lab.internal → job `lab-app`. CI utama tetap GitHub Actions.
+
 Jalankan lokal: `pip install -r requirements-dev.txt && pytest -q && uvicorn app.main:app --reload`

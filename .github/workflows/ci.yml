@@ -1,0 +1,94 @@
+# test → build → Trivy scan → push GHCR → update tag image di lab-gitops (overlay dev).
+# Argo CD di lab menarik perubahan dari lab-gitops (pull, tanpa port masuk ke lab).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/teguhmuflih/lab-app
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - run: pytest -q
+
+  build:
+    needs: test
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: tag
+        run: echo "tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: build (lokal, belum push)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          tags: ${{ env.IMAGE }}:${{ steps.tag.outputs.tag }}
+          build-args: APP_VERSION=${{ steps.tag.outputs.tag }}
+          provenance: false
+      - name: Trivy — gagal bila ada CVE CRITICAL/HIGH yang sudah ada perbaikannya
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:${{ steps.tag.outputs.tag }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: login GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: push GHCR
+        if: github.event_name == 'push'
+        run: docker push "$IMAGE:${{ steps.tag.outputs.tag }}"
+
+  deploy-dev:
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: gitops-dev
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: teguhmuflih/lab-gitops
+          ssh-key: ${{ secrets.GITOPS_DEPLOY_KEY }}
+      - name: set tag image overlay dev
+        env:
+          TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          f=apps/lab-app/overlays/dev/kustomization.yaml
+          sed -i -E "s|^(\s*newTag:\s*)\S+|\1${TAG}|" "$f"   # ganti nilai, komentar tetap
+          git diff --stat
+          git config user.name "lab-app-ci"
+          git config user.email "lab-app-ci@users.noreply.github.com"
+          git commit -am "lab-app dev → ${TAG}" || { echo "tag sudah sama"; exit 0; }
+          git push

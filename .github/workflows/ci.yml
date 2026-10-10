@@ -6,6 +6,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:   # jalankan ulang tanpa commit baru (mis. setelah base image diperbarui)
 
 permissions:
   contents: read
@@ -59,19 +60,19 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
       - name: login GHCR
-        if: github.event_name == 'push'
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: push GHCR
-        if: github.event_name == 'push'
+        if: github.event_name != 'pull_request'
         run: docker push "$IMAGE:${{ steps.tag.outputs.tag }}"
 
   deploy-dev:
     needs: build
-    if: github.event_name == 'push'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     concurrency:
       group: gitops-dev

@@ -7,23 +7,12 @@ RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 FROM python:3.13-slim-trixie
 RUN useradd --system --uid 10001 --no-create-home app
 COPY --from=build /install /usr/local
-# Paket bawaan base image yang punya CVE HIGH dengan perbaikan (Trivy, 2026-10-10).
-# Trivy masih melihat versi lama walau pip sudah mengupgrade: metadata lama tertinggal di
-# image. Metadata itu dihapus di sini, lalu semua instalasi yang tersisa dicek versinya.
-RUN pip install --no-cache-dir --upgrade "setuptools>=78.1.1" "urllib3>=2.8.0" "msgpack>=1.2.1" \
- && python - <<'EOF'
-import importlib.metadata as m, shutil
-mins = {"setuptools": (78, 1, 1), "urllib3": (2, 8, 0), "msgpack": (1, 2, 1)}
-def nama(d): return (d.metadata["Name"] or "").lower()
-def ver(d): return tuple(int(x) for x in d.version.split(".")[:3])
-for d in list(m.distributions()):
-    if nama(d) in mins and ver(d) < mins[nama(d)]:
-        shutil.rmtree(d._path)
-for name, low in mins.items():
-    sisa = [d for d in m.distributions() if nama(d) == name]
-    assert sisa and all(ver(d) >= low for d in sisa), (name, [d.version for d in sisa])
-    print(name, [d.version for d in sisa])
-EOF
+# Trivy (2026-10-10) melaporkan msgpack 1.1.2, urllib3 2.7.0, setuptools 70.3.0 dari
+# pip/_vendor/vendor.txt di base image. Versi vendor ini tidak bisa dinaikkan dari luar.
+# Aplikasi tidak butuh pip saat runtime (dependency sudah disalin dari stage build),
+# jadi pip dihapus dari image final.
+RUN pip uninstall -y pip \
+ && python -c "import importlib.util as u; assert u.find_spec('pip') is None, 'pip masih ada'"
 COPY app/ /srv/app/
 WORKDIR /srv
 ARG APP_VERSION=dev
